@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Local data — never commit data files
+data/*
+!data/.gitkeep
+*.parquet
+*.csv
+
+# Secrets and environment
+.env
+*.pem
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# dbt
+target/
+dbt_packages/
+logs/
+
+# Great Expectations
+gx/uncommitted/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

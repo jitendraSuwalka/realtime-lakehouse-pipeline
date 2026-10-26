@@ -1,0 +1,3 @@
+# Phase 0 dependencies — more are added as phases progress
+confluent-kafka>=2.6
+faker==30.8.2

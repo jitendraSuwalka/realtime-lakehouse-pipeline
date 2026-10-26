@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# Local infrastructure for the lakehouse pipeline.
+# Phase 0: Kafka (the event broker) + Kafka UI (a browser window into Kafka).
+# More services (MinIO, Spark, Airflow, Postgres) are added in later phases.
+#
+#   start:  docker compose up -d
+#   stop:   docker compose down
+#   status: docker compose ps
+# ---------------------------------------------------------------------------
+services:
+
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: lakehouse-kafka
+    ports:
+      - "9092:9092"          # reachable from your laptop as localhost:9092
+    environment:
+      # Single-node Kafka in modern KRaft mode (no ZooKeeper needed).
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Two doors into Kafka:
+      #   - INTERNAL (kafka:19092)  → for other containers, e.g. Kafka UI
+      #   - EXTERNAL (localhost:9092) → for scripts running on your laptop
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:19092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: lakehouse-kafka-ui
+    ports:
+      - "8080:8080"          # open http://localhost:8080 in your browser
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
+    depends_on:
+      - kafka
