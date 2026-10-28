@@ -33,3 +33,29 @@ merchants, customers, dates). Analysts and dashboards only ever touch Gold.
   `localhost:9092` for the laptop, `kafka:19092` for other containers.
 - Kafka UI on `http://localhost:8080` for visibility while developing.
 - Generator produces keyed-by-merchant JSON events to topic `payments.raw`.
+
+### Phase 1 — bronze layer (done)
+- **LocalStack** joins docker-compose as the local S3 (AWS API on `:4566`).
+  The bronze writer talks to it through `boto3` with an `endpoint_url` —
+  dropping that one argument points the same code at real AWS S3 in Phase 6.
+- *Build incident, kept for honesty:* the layer was designed on **MinIO**,
+  but during the build its public images became unavailable (Docker Hub:
+  pull access denied; quay.io: 401). Because the store is pure
+  configuration, the swap to LocalStack cost one endpoint default and a
+  compose block — a real example of why S3-compatible abstractions matter.
+- `scripts/init_s3.py` creates the `lakehouse` bucket idempotently
+  (LocalStack community edition doesn't persist across `docker compose
+  down`; day to day use `stop`/`start`, and bronze can always be re-landed
+  from Kafka).
+- `src/bronze/bronze_writer.py` consumes `payments.raw` as consumer group
+  `bronze-writer`, batches events in memory, and flushes every 500 events or
+  30 seconds as **snappy-compressed Parquet** to
+  `s3://lakehouse/bronze/payments/ingest_date=YYYY-MM-DD/`.
+- Each row gains **lineage columns**: `kafka_partition`, `kafka_offset`,
+  `ingested_at`.
+- Semantics are **at-least-once** (a crash between a file write and an
+  offset commit can duplicate a few events). Deduplication on `event_id`
+  is Silver's job — a standard, defensible trade-off.
+- The deliberately-bad events (negative amounts, null merchant_id, bad
+  currency codes) are **kept** in bronze, by design: bronze is the audit
+  copy, and Great Expectations will catch them at the Silver gate.

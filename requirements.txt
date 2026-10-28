@@ -1,3 +1,8 @@
-# Phase 0 dependencies — more are added as phases progress
+# Phase 0 - event generation and Kafka
 confluent-kafka>=2.6
 faker==30.8.2
+
+# Phase 1 - bronze layer (Parquet + S3/MinIO)
+pyarrow>=17.0
+boto3>=1.34
+pandas>=2.2

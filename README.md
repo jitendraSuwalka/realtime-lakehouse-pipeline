@@ -14,10 +14,11 @@ provisioned with **Terraform**, and tested in CI with **GitHub Actions**.
 ```
  ┌───────────┐    ┌───────┐    ┌──────────┐    ┌──────────┐    ┌───────────────┐
  │ Generator │───▶│ Kafka │───▶│  BRONZE  │───▶│  SILVER  │───▶│     GOLD      │
- │ (payment  │    │topic: │    │ raw JSON │    │ cleaned, │    │ dbt star      │
- │  events)  │    │payments│   │ on S3    │    │ deduped  │    │ schema in     │
- └───────────┘    │ .raw  │    │ (MinIO   │    │ (Spark)  │    │ Redshift      │
-                  └───────┘    │  local)  │    └──────────┘    └───────────────┘
+ │ (payment  │    │topic: │    │ raw      │    │ cleaned, │    │ dbt star      │
+ │  events)  │    │payments│   │ Parquet  │    │ deduped  │    │ schema in     │
+ └───────────┘    │ .raw  │    │ on S3    │    │ (Spark)  │    │ Redshift      │
+                  └───────┘    │ (Local-  │    └──────────┘    └───────────────┘
+                               │  Stack)  │
                                └──────────┘
         Airflow orchestrates ── Great Expectations guards quality
         Terraform provisions AWS ── GitHub Actions runs CI
@@ -28,7 +29,7 @@ provisioned with **Terraform**, and tested in CI with **GitHub Actions**.
 ## Build status
 
 - [x] **Phase 0** — project scaffold, Kafka (KRaft) via Docker Compose, payment event generator
-- [ ] **Phase 1** — Bronze layer: Kafka consumer landing raw events as partitioned Parquet in MinIO/S3
+- [x] **Phase 1** — Bronze layer: Kafka consumer landing raw events as date-partitioned Parquet in local S3 (LocalStack)
 - [ ] **Phase 2** — Silver layer: Spark cleaning, deduplication, typing
 - [ ] **Phase 3** — Gold layer: dbt star schema (fact_payments + dimensions)
 - [ ] **Phase 4** — Airflow orchestration of the batch hops
@@ -39,7 +40,7 @@ provisioned with **Terraform**, and tested in CI with **GitHub Actions**.
 ## Quickstart (what works so far)
 
 ```bash
-# 1. start Kafka + Kafka UI
+# 1. start Kafka, Kafka UI and LocalStack (local S3)
 docker compose up -d
 
 # 2. install Python dependencies
@@ -51,8 +52,14 @@ python3 src/generator/payment_generator.py --dry-run --limit 5
 
 # 4. stream events into Kafka (Ctrl+C to stop)
 python3 src/generator/payment_generator.py
+#    watch them arrive: http://localhost:8080  (Kafka UI → topic payments.raw)
 
-# 5. watch them arrive: http://localhost:8080  (Kafka UI → topic payments.raw)
+# 5. create the bucket (idempotent - run any time), then land events in bronze
+python3 scripts/init_s3.py
+python3 src/bronze/bronze_writer.py --limit 1000
+
+# 6. verify what landed
+python3 scripts/peek_bronze.py
 ```
 
 ## Design decisions
@@ -64,7 +71,10 @@ Recorded as the build progresses — see [docs/architecture.md](docs/architectur
 | Kafka in **KRaft mode** | Modern Kafka without ZooKeeper — one service fewer to run |
 | **~1% deliberately invalid events** | Gives downstream data-quality checks something real to catch |
 | **Fixed merchant/customer pools** | Repeating IDs make per-merchant analytics meaningful, like a real platform |
-| **MinIO locally, S3 in cloud** | Same S3 API — the pipeline code is identical in both environments |
+| **LocalStack locally, S3 in cloud** | Same S3 API — identical pipeline code in both environments. (Started on MinIO; swapped mid-build when its public images vanished from Docker Hub and quay.io — one config value changed, zero code.) |
+| **Bronze stores events unmodified** (bad ones included) | Bronze is the permanent audit copy; cleaning belongs to Silver |
+| **At-least-once ingestion, dedupe in Silver** | Simpler and safer than pretending exactly-once; Silver dedupes on `event_id` |
+| **Hive-style partitioning** (`ingest_date=YYYY-MM-DD/`) | Spark, dbt and Redshift Spectrum can read one day without scanning all |
 
 ## Licence
 

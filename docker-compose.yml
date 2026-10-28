@@ -1,10 +1,16 @@
 # ---------------------------------------------------------------------------
 # Local infrastructure for the lakehouse pipeline.
 # Phase 0: Kafka (the event broker) + Kafka UI (a browser window into Kafka).
-# More services (MinIO, Spark, Airflow, Postgres) are added in later phases.
+# Phase 1: LocalStack - a local AWS emulator providing the S3 API.
+#          (Originally MinIO; swapped mid-build when MinIO's public images
+#          became unavailable on both Docker Hub and quay.io - see commit
+#          history. The bronze code was unaffected: the endpoint is config.)
+#          The bronze/silver layers live here locally; in Phase 6 the same
+#          code points at real AWS S3 (same API, different endpoint).
 #
 #   start:  docker compose up -d
-#   stop:   docker compose down
+#   stop:   docker compose stop     (keeps containers + their data)
+#   reset:  docker compose down     (removes containers - full fresh start)
 #   status: docker compose ps
 # ---------------------------------------------------------------------------
 services:
@@ -40,3 +46,17 @@ services:
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:19092
     depends_on:
       - kafka
+
+  localstack:
+    # Local AWS emulator - we use its S3 service as the lake's object store.
+    # Any access key/secret is accepted (it's an emulator); the bronze code
+    # keeps its defaults and only the endpoint matters.
+    # Note: the community edition does not persist data across 'down' -
+    # scripts/init_s3.py recreates the bucket in seconds, and bronze can
+    # always be re-landed from Kafka. Day to day, prefer 'stop' over 'down'.
+    image: localstack/localstack:3.8
+    container_name: lakehouse-localstack
+    ports:
+      - "4566:4566"          # the AWS API gateway -> http://localhost:4566
+    environment:
+      SERVICES: s3           # only start S3 - keeps it light
