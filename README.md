@@ -30,7 +30,7 @@ provisioned with **Terraform**, and tested in CI with **GitHub Actions**.
 
 - [x] **Phase 0** — project scaffold, Kafka (KRaft) via Docker Compose, payment event generator
 - [x] **Phase 1** — Bronze layer: Kafka consumer landing raw events as date-partitioned Parquet in local S3 (LocalStack)
-- [ ] **Phase 2** — Silver layer: Spark cleaning, deduplication, typing
+- [x] **Phase 2** — Silver layer: Spark (containerised) cleaning, typing, dedupe on event_id, quarantine of bad events
 - [ ] **Phase 3** — Gold layer: dbt star schema (fact_payments + dimensions)
 - [ ] **Phase 4** — Airflow orchestration of the batch hops
 - [ ] **Phase 5** — Great Expectations validation suites at each layer
@@ -60,6 +60,11 @@ python3 src/bronze/bronze_writer.py --limit 1000
 
 # 6. verify what landed
 python3 scripts/peek_bronze.py
+
+# 7. build the silver layer: clean, type, dedupe, quarantine (Spark in Docker;
+#    first run downloads the Spark image + S3 connector jars - be patient)
+docker compose run --rm spark-job
+python3 scripts/peek_silver.py
 ```
 
 ## Design decisions
@@ -71,10 +76,12 @@ Recorded as the build progresses — see [docs/architecture.md](docs/architectur
 | Kafka in **KRaft mode** | Modern Kafka without ZooKeeper — one service fewer to run |
 | **~1% deliberately invalid events** | Gives downstream data-quality checks something real to catch |
 | **Fixed merchant/customer pools** | Repeating IDs make per-merchant analytics meaningful, like a real platform |
-| **LocalStack locally, S3 in cloud** | Same S3 API — identical pipeline code in both environments. (Started on MinIO; swapped mid-build when its public images vanished from Docker Hub and quay.io — one config value changed, zero code.) |
+| **LocalStack locally, S3 in cloud** | Same S3 API — identical pipeline code in both environments. (Started on MinIO; swapped mid-build when its public images vanished from Docker Hub and quay.io — one config value changed, zero code. LocalStack then pinned to 3.8 when `latest` began requiring a licence token.) |
 | **Bronze stores events unmodified** (bad ones included) | Bronze is the permanent audit copy; cleaning belongs to Silver |
 | **At-least-once ingestion, dedupe in Silver** | Simpler and safer than pretending exactly-once; Silver dedupes on `event_id` |
-| **Hive-style partitioning** (`ingest_date=YYYY-MM-DD/`) | Spark, dbt and Redshift Spectrum can read one day without scanning all |
+| **Hive-style partitioning** (`ingest_date=` in bronze, `event_date=` in silver) | Bronze partitions by arrival, silver by business date — analysts think in business dates |
+| **Quarantine, don't delete** | Rejects land in `silver/quarantine/` with a `reject_reason` — countable, inspectable, alertable |
+| **Containerised Spark job** (`docker compose run`) | The container brings its own Python/Java (laptop Python 3.14 is ahead of PySpark); mirrors how production Spark runs |
 
 ## Licence
 

@@ -3,10 +3,13 @@
 # Phase 0: Kafka (the event broker) + Kafka UI (a browser window into Kafka).
 # Phase 1: LocalStack - a local AWS emulator providing the S3 API.
 #          (Originally MinIO; swapped mid-build when MinIO's public images
-#          became unavailable on both Docker Hub and quay.io - see commit
-#          history. The bronze code was unaffected: the endpoint is config.)
-#          The bronze/silver layers live here locally; in Phase 6 the same
-#          code points at real AWS S3 (same API, different endpoint).
+#          became unavailable on both Docker Hub and quay.io. LocalStack's
+#          `latest` then demanded a licence token, so we pin the 3.8
+#          community release - two vendor lessons in why images get pinned.)
+# Phase 2: spark-job - a batch Spark runner for the silver layer. Not a
+#          long-running service: executed on demand with
+#          `docker compose run --rm spark-job` (hence the "jobs" profile,
+#          which keeps it out of `docker compose up`).
 #
 #   start:  docker compose up -d
 #   stop:   docker compose stop     (keeps containers + their data)
@@ -49,9 +52,10 @@ services:
 
   localstack:
     # Local AWS emulator - we use its S3 service as the lake's object store.
-    # Any access key/secret is accepted (it's an emulator); the bronze code
-    # keeps its defaults and only the endpoint matters.
-    # Note: the community edition does not persist data across 'down' -
+    # Any access key/secret is accepted (it's an emulator); only the
+    # endpoint matters. Pinned to 3.8: the last line of free community
+    # releases before `latest` started requiring a licence token.
+    # Note: data does not persist across 'docker compose down' -
     # scripts/init_s3.py recreates the bucket in seconds, and bronze can
     # always be re-landed from Kafka. Day to day, prefer 'stop' over 'down'.
     image: localstack/localstack:3.8
@@ -60,3 +64,34 @@ services:
       - "4566:4566"          # the AWS API gateway -> http://localhost:4566
     environment:
       SERVICES: s3           # only start S3 - keeps it light
+
+  spark-job:
+    # Batch Spark runner for the silver layer (and later jobs).
+    # Why a container and not `pip install pyspark`? Two honest reasons:
+    #   1. Our laptop Python (3.14) is newer than PySpark supports - the
+    #      container ships its own compatible Python and Java.
+    #   2. Production Spark runs on clusters/containers anyway; this mirrors
+    #      that shape in miniature (local[2] = Spark's local mode, 2 cores).
+    # Run it:   docker compose run --rm spark-job
+    image: apache/spark:3.5.1
+    profiles: ["jobs"]       # excluded from `docker compose up -d`
+    user: "0:0"              # dev convenience: avoids volume-permission issues
+    depends_on:
+      - localstack
+    environment:
+      S3_ENDPOINT: http://localstack:4566   # service name, NOT localhost -
+      S3_ACCESS_KEY: minioadmin             # containers reach each other by
+      S3_SECRET_KEY: minioadmin             # compose DNS name
+      BUCKET: lakehouse
+    volumes:
+      - ./src/silver:/opt/job:ro            # the job code, read-only
+      - ./data/ivy:/tmp/.ivy                # cache the S3 connector jars
+                                            # (first run downloads ~300 MB;
+                                            #  cached after that)
+    command: >
+      /opt/spark/bin/spark-submit
+      --master local[2]
+      --packages org.apache.hadoop:hadoop-aws:3.3.4
+      --conf spark.jars.ivy=/tmp/.ivy
+      --conf spark.ui.showConsoleProgress=false
+      /opt/job/silver_job.py

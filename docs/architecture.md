@@ -59,3 +59,25 @@ merchants, customers, dates). Analysts and dashboards only ever touch Gold.
 - The deliberately-bad events (negative amounts, null merchant_id, bad
   currency codes) are **kept** in bronze, by design: bronze is the audit
   copy, and Great Expectations will catch them at the Silver gate.
+
+### Phase 2 — silver layer (done)
+- `src/silver/silver_job.py`, a **PySpark** batch job run inside the
+  `apache/spark:3.5.1` container (`docker compose run --rm spark-job`),
+  reading and writing S3 through the **S3A** connector
+  (`hadoop-aws`, path-style access for the emulator).
+- Why containerised: the laptop's Python 3.14 is newer than PySpark
+  supports, and production Spark is containerised/clustered anyway; the
+  image ships its own Python and Java. `local[2]` = Spark local mode.
+- Transformations: **typing** (timestamps, double amount, derived
+  `event_date`), **deduplication** on `event_id` keeping the latest
+  `ingested_at` copy (window + row_number — deterministic), and
+  **validation** splitting events into `silver/payments/` (partitioned by
+  `event_date`, the business date) and `silver/quarantine/payments/`
+  (tagged with `reject_reason`: missing_merchant, non_positive_amount,
+  invalid_currency).
+- **Quarantine, don't delete**: rejects stay queryable — counted in the
+  job summary, inspected with `scripts/peek_silver.py`, and formalised by
+  Great Expectations in Phase 5.
+- **Full refresh** each run (`mode=overwrite`): simple and idempotent at
+  this scale. Incremental per-partition processing arrives with Airflow
+  (Phase 4).
