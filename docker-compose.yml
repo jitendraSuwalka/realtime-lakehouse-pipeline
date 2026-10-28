@@ -16,7 +16,15 @@
 #   stop:   docker compose stop     (keeps containers + their data)
 #   reset:  docker compose down     (removes containers - full fresh start)
 #   status: docker compose ps
+# Phase 4: airflow - the orchestrator (UI on http://localhost:8081). Runs
+#          the whole pipeline as one DAG; launches the Spark and dbt
+#          containers itself through the mounted Docker socket.
 # ---------------------------------------------------------------------------
+
+# Pinned so the network name (realtime-lakehouse-pipeline_default) is stable -
+# the Airflow DAG attaches the containers it launches to it by name.
+name: realtime-lakehouse-pipeline
+
 services:
 
   kafka:
@@ -134,3 +142,36 @@ services:
     volumes:
       - ./dbt:/usr/app                   # the dbt project
       - ./dbt/profiles:/root/.dbt        # where dbt looks for profiles.yml
+
+  airflow:
+    # The orchestrator, built from docker/airflow.Dockerfile (official
+    # Airflow 2.10 image + the Docker provider + the bronze/loader deps).
+    # `standalone` runs scheduler + webserver in one container - right-sized
+    # for a laptop. Metadata lives in our Postgres (database: airflow).
+    # The Docker socket mount is what lets DAG tasks start the Spark and
+    # dbt containers; HOST_REPO passes the repo's HOST path for their
+    # volume mounts (DockerOperator talks to the host daemon, so container
+    # paths would be meaningless to it).
+    # Not needed day-to-day? `docker compose stop airflow` frees ~1 GB.
+    build:
+      context: docker
+      dockerfile: airflow.Dockerfile
+    container_name: lakehouse-airflow
+    user: "0:0"              # dev convenience: socket + mount permissions
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8081:8080"          # Airflow UI -> http://localhost:8081
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://lakehouse:lakehouse@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      HOST_REPO: ${PWD}      # the repo's path on the host, for DockerOperator
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./src:/opt/airflow/repo/src:ro
+      - ./scripts:/opt/airflow/repo/scripts:ro
+      - ./data/airflow-logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: standalone

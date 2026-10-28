@@ -32,7 +32,7 @@ provisioned with **Terraform**, and tested in CI with **GitHub Actions**.
 - [x] **Phase 1** — Bronze layer: Kafka consumer landing raw events as date-partitioned Parquet in local S3 (LocalStack)
 - [x] **Phase 2** — Silver layer: Spark (containerised) cleaning, typing, dedupe on event_id, quarantine of bad events
 - [x] **Phase 3** — Gold layer: dbt star schema in Postgres (fact_payments + merchant/customer/date dims) with dbt tests
-- [ ] **Phase 4** — Airflow orchestration of the batch hops
+- [x] **Phase 4** — Airflow DAG orchestrating bronze → silver → warehouse → dbt build + test (BashOperator + DockerOperator, retries, daily schedule)
 - [ ] **Phase 5** — Great Expectations validation suites at each layer
 - [ ] **Phase 6** — AWS: Terraform-provisioned S3 + Redshift Serverless, end-to-end cloud run
 - [ ] **Phase 7** — CI/CD with GitHub Actions; final docs and demo
@@ -71,6 +71,13 @@ python3 scripts/load_silver_to_warehouse.py
 docker compose run --rm dbt run
 docker compose run --rm dbt test
 python3 scripts/peek_gold.py
+
+# 9. or let Airflow run steps 5-8 as one DAG (UI: http://localhost:8081;
+#    one-off: create its metadata DB, then build + start it)
+docker compose exec postgres psql -U lakehouse -c "CREATE DATABASE airflow;"
+docker compose build airflow && docker compose up -d airflow
+docker compose exec airflow cat standalone_admin_password.txt   # login: admin
+#    then unpause `lakehouse_pipeline` in the UI and press ▶ Trigger
 ```
 
 ## Design decisions
@@ -90,6 +97,8 @@ Recorded as the build progresses — see [docs/architecture.md](docs/architectur
 | **Containerised Spark job** (`docker compose run`) | The container brings its own Python/Java (laptop Python 3.14 is ahead of PySpark); mirrors how production Spark runs |
 | **Postgres as the dev warehouse** | Same dbt models later target Redshift via a profile change — the migration is config, not SQL |
 | **dbt tests on every layer contract** | unique/not_null/accepted_values/relationships prove silver's guarantees and the star schema's referential integrity on every run |
+| **Airflow as conductor, not compute** | Tasks launch the same Spark/dbt containers used manually (DockerOperator over the socket); heavy work stays out of the scheduler |
+| **Idempotent DAG** | Consumer-group drain + full-refresh layers + TRUNCATE/COPY mean any run can be safely repeated — the property that makes schedules operable |
 
 ## Licence
 

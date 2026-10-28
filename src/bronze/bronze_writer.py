@@ -3,11 +3,11 @@ bronze_writer.py
 ================
 The BRONZE layer of the lakehouse: a Kafka consumer that reads payment
 events from the topic `payments.raw` and lands them, unmodified, as
-date-partitioned Parquet files in MinIO (locally) or S3 (in the cloud).
+date-partitioned Parquet files in S3 (LocalStack locally, AWS in Phase 6).
 
   ┌─────────┐   consume    ┌──────────────┐   Parquet files    ┌──────────────┐
-  │  Kafka  │ ───────────▶ │ this script  │ ─────────────────▶ │ MinIO / S3   │
-  │payments │              │ (batches in  │  bronze/payments/  │ bucket:      │
+  │  Kafka  │ ───────────▶ │ this script  │ ─────────────────▶ │ S3 (Local-   │
+  │payments │              │ (batches in  │  bronze/payments/  │ Stack) bucket│
   │  .raw   │              │  memory)     │  ingest_date=.../  │ lakehouse    │
   └─────────┘              └──────────────┘                    └──────────────┘
 
@@ -22,17 +22,16 @@ Bronze-layer principles (the interview answer, in comments):
      That is a deliberate trade-off — the Silver layer deduplicates on
      event_id, which is simpler and safer than trying to be exactly-once here.
 
-Partitioning: files land under  bronze/payments/ingest_date=YYYY-MM-DD/
-  The `key=value` folder style is called Hive partitioning — Spark, dbt,
-  Athena and Redshift Spectrum all understand it natively, so later layers
-  can read "just yesterday" without scanning everything.
-
 Usage:
-  python3 src/bronze/bronze_writer.py              # run until Ctrl+C
-  python3 src/bronze/bronze_writer.py --limit 1000 # stop after 1,000 events
+  python3 src/bronze/bronze_writer.py                       # run until Ctrl+C
+  python3 src/bronze/bronze_writer.py --limit 1000          # stop after 1,000
+  python3 src/bronze/bronze_writer.py --max-idle-seconds 20 # batch-drain mode:
+      stop once the topic has been quiet for 20s — this is how Airflow runs
+      it, turning a forever-consumer into a bounded batch task (Phase 4).
 
 Configuration (environment variables, all optional):
-  BOOTSTRAP_SERVERS   Kafka address          (default: localhost:9092)
+  BOOTSTRAP_SERVERS   Kafka address          (default: localhost:9092;
+                                              inside compose: kafka:19092)
   TOPIC               topic to consume       (default: payments.raw)
   GROUP_ID            Kafka consumer group   (default: bronze-writer)
   MINIO_ENDPOINT      S3 API address         (default: http://localhost:4566)
@@ -101,19 +100,24 @@ def object_key(now: datetime) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Bronze layer: Kafka -> Parquet in MinIO/S3")
+    parser = argparse.ArgumentParser(description="Bronze layer: Kafka -> Parquet in S3")
     parser.add_argument(
         "--limit", type=int, default=None,
         help="stop after this many events (default: run until Ctrl+C)",
     )
+    parser.add_argument(
+        "--max-idle-seconds", type=float, default=None,
+        help="stop once the topic has been quiet this long (batch-drain "
+             "mode, used by Airflow; default: wait forever)",
+    )
     args = parser.parse_args()
 
-    # Imported here so the pure helpers above are testable without Kafka/MinIO.
+    # Imported here so the pure helpers above are testable without Kafka/S3.
     import boto3
     from confluent_kafka import Consumer, KafkaError
 
-    # --- the S3 client, pointed at MinIO ------------------------------------
-    # The ONLY difference between local MinIO and real AWS S3 is this
+    # --- the S3 client --------------------------------------------------
+    # The ONLY difference between local LocalStack and real AWS S3 is this
     # endpoint_url. In Phase 6 we drop it and the same code talks to AWS.
     s3 = boto3.client(
         "s3",
@@ -139,6 +143,7 @@ def main() -> None:
     batch: list[dict] = []
     total = 0
     last_flush = time.monotonic()
+    last_message = time.monotonic()   # for --max-idle-seconds
     stop = {"flag": False}
 
     def on_sigint(signum, frame):
@@ -148,7 +153,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, on_sigint)
 
     def flush() -> None:
-        """Write the current batch to MinIO as one Parquet file."""
+        """Write the current batch to S3 as one Parquet file."""
         nonlocal batch, last_flush
         if not batch:
             last_flush = time.monotonic()
@@ -162,8 +167,10 @@ def main() -> None:
         last_flush = time.monotonic()
 
     log.info(
-        "Consuming '%s' as group '%s'; flushing every %d events or %.0fs. Ctrl+C to stop.",
+        "Consuming '%s' as group '%s'; flushing every %d events or %.0fs. %s",
         TOPIC, GROUP_ID, FLUSH_MAX_EVENTS, FLUSH_SECONDS,
+        f"Exiting after {args.max_idle_seconds}s idle." if args.max_idle_seconds
+        else "Ctrl+C to stop.",
     )
 
     try:
@@ -173,6 +180,16 @@ def main() -> None:
                 # No new message right now - a quiet topic is normal.
                 if time.monotonic() - last_flush >= FLUSH_SECONDS:
                     flush()
+                # Batch-drain mode: topic quiet long enough -> we're done.
+                if (
+                    args.max_idle_seconds
+                    and time.monotonic() - last_message >= args.max_idle_seconds
+                ):
+                    log.info(
+                        "Topic quiet for %.0fs - draining complete.",
+                        args.max_idle_seconds,
+                    )
+                    break
                 continue
             if msg.error():
                 if msg.error().code() == KafkaError._PARTITION_EOF:
@@ -187,6 +204,7 @@ def main() -> None:
             event["ingested_at"] = datetime.now(timezone.utc).isoformat()
             batch.append(event)
             total += 1
+            last_message = time.monotonic()
 
             if len(batch) >= FLUSH_MAX_EVENTS or time.monotonic() - last_flush >= FLUSH_SECONDS:
                 flush()

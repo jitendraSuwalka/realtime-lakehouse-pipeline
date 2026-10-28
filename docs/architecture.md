@@ -99,3 +99,24 @@ merchants, customers, dates). Analysts and dashboards only ever touch Gold.
   integrity). `docker compose run --rm dbt test` must pass before a commit.
 - `scripts/peek_gold.py` runs the project's first business query: top
   merchants by settled revenue, fact joined to dimension.
+
+### Phase 4 — orchestration (done)
+- **Airflow 2.10** (image built from `docker/airflow.Dockerfile`, pinned
+  with Airflow's official constraints file) runs scheduler + webserver via
+  `standalone` in one container; metadata in Postgres (database `airflow`),
+  LocalExecutor; UI on `http://localhost:8081`.
+- One DAG, `lakehouse_pipeline` (`@daily`, `catchup=False`, 2 retries/task):
+  `bronze_ingest → silver_spark → load_warehouse → dbt_run → dbt_test`.
+- **Two operator patterns**: BashOperator runs bronze and the loader inside
+  the Airflow container (its image carries their deps); **DockerOperator**
+  launches the same `apache/spark:3.5.1` and project dbt containers used
+  manually, over the mounted Docker socket, attached to the compose network
+  by name. Airflow conducts; containers compute.
+- `bronze_writer.py` gained `--max-idle-seconds`: the forever-consumer
+  becomes a bounded batch drain (exit after N quiet seconds) — the
+  difference between a streaming service and a schedulable task.
+- **DockerOperator gotcha, documented**: it talks to the HOST daemon, so
+  bind mounts need host paths — compose injects the repo path as
+  `HOST_REPO`.
+- The DAG is **idempotent end to end** (consumer-group drain, full-refresh
+  silver, TRUNCATE+COPY load, dbt rebuild): any run can be repeated safely.
