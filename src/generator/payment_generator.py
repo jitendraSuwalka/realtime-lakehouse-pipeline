@@ -60,6 +60,8 @@ log = logging.getLogger("payment-generator")
 
 fake = Faker()
 Faker.seed(42)   # same merchant/customer names on every run → reproducible
+pool_rng = random.Random(42)  # dedicated seeded RNG: pool attributes stay
+                              # identical across runs - event flow stays random
 random.seed()    # but random event flow each run
 
 # ---------------------------------------------------------------------------
@@ -72,8 +74,8 @@ MERCHANTS = [
     {
         "merchant_id": f"M{1000 + i}",
         "merchant_name": fake.company(),
-        "merchant_country": random.choice(["IE", "GB", "FR", "DE", "ES", "NL"]),
-        "merchant_category": random.choice(
+        "merchant_country": pool_rng.choice(["IE", "GB", "FR", "DE", "ES", "NL"]),
+        "merchant_category": pool_rng.choice(
             ["retail", "food_beverage", "travel", "digital_services", "hospitality"]
         ),
     }
