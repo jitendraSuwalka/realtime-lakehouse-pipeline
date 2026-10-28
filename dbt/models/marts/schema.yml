@@ -1,0 +1,46 @@
+version: 2
+
+# Mart tests: unique dimension keys, and referential integrity from the
+# fact to every dimension - the promise a star schema makes to analysts.
+models:
+  - name: dim_merchants
+    columns:
+      - name: merchant_id
+        tests: [unique, not_null]
+
+  - name: dim_customers
+    columns:
+      - name: customer_id
+        tests: [unique, not_null]
+
+  - name: dim_dates
+    columns:
+      - name: date_day
+        tests: [unique, not_null]
+
+  - name: fact_payments
+    description: One row per payment event; keys into the three dimensions.
+    columns:
+      - name: event_id
+        tests: [unique, not_null]
+      - name: merchant_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_merchants')
+                field: merchant_id
+      - name: customer_id
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: event_date
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_dates')
+                field: date_day

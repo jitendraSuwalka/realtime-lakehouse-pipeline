@@ -6,10 +6,11 @@
 #          became unavailable on both Docker Hub and quay.io. LocalStack's
 #          `latest` then demanded a licence token, so we pin the 3.8
 #          community release - two vendor lessons in why images get pinned.)
-# Phase 2: spark-job - a batch Spark runner for the silver layer. Not a
-#          long-running service: executed on demand with
-#          `docker compose run --rm spark-job` (hence the "jobs" profile,
-#          which keeps it out of `docker compose up`).
+# Phase 2: spark-job - batch Spark runner for the silver layer
+#          (`docker compose run --rm spark-job`).
+# Phase 3: postgres - the warehouse (stands in for Redshift until Phase 6),
+#          and dbt - built from docker/dbt.Dockerfile, run on demand:
+#          `docker compose run --rm dbt run` / `... dbt test`.
 #
 #   start:  docker compose up -d
 #   stop:   docker compose stop     (keeps containers + their data)
@@ -95,3 +96,41 @@ services:
       --conf spark.jars.ivy=/tmp/.ivy
       --conf spark.ui.showConsoleProgress=false
       /opt/job/silver_job.py
+
+  postgres:
+    # The warehouse. Locally it's Postgres; in Phase 6 the same dbt models
+    # run against Redshift Serverless - dbt makes that a profile change.
+    image: postgres:16
+    container_name: lakehouse-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: lakehouse
+      POSTGRES_PASSWORD: lakehouse       # dev-only credentials
+      POSTGRES_DB: lakehouse
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data   # survives restarts,
+                                                   # gitignored like all data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lakehouse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  dbt:
+    # dbt runner, built from our own small Dockerfile (Python 3.12 inside -
+    # same laptop-Python-too-new story as Spark). Run on demand:
+    #   docker compose run --rm dbt run
+    #   docker compose run --rm dbt test
+    build:
+      context: docker
+      dockerfile: dbt.Dockerfile
+    profiles: ["jobs"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DBT_HOST: postgres
+    volumes:
+      - ./dbt:/usr/app                   # the dbt project
+      - ./dbt/profiles:/root/.dbt        # where dbt looks for profiles.yml

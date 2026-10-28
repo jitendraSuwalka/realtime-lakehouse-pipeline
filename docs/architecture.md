@@ -81,3 +81,21 @@ merchants, customers, dates). Analysts and dashboards only ever touch Gold.
 - **Full refresh** each run (`mode=overwrite`): simple and idempotent at
   this scale. Incremental per-partition processing arrives with Airflow
   (Phase 4).
+
+### Phase 3 — gold layer (done)
+- **Postgres 16** joins compose as the warehouse (Redshift's stand-in until
+  Phase 6; dbt makes that swap a profile change, not a rewrite).
+- `scripts/load_silver_to_warehouse.py` carries silver from S3 into
+  `raw.silver_payments` with **TRUNCATE + COPY** (bulk protocol,
+  idempotent), recovering `event_date` from each file's partition path.
+- **dbt** (dbt-postgres 1.9 in an image built from `docker/dbt.Dockerfile`,
+  Python 3.12 inside) builds the star schema in schema `analytics`:
+  `stg_payments` (view) → `fact_payments` + `dim_merchants`,
+  `dim_customers`, `dim_dates` (tables).
+- **dbt tests** encode the layer contracts: `unique`/`not_null` on
+  `event_id` (proves the Spark dedupe), `accepted_values` on
+  currency/status (proves the quarantine gate), and `relationships` from
+  every fact key to its dimension (proves the star's referential
+  integrity). `docker compose run --rm dbt test` must pass before a commit.
+- `scripts/peek_gold.py` runs the project's first business query: top
+  merchants by settled revenue, fact joined to dimension.

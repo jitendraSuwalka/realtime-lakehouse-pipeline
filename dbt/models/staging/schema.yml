@@ -1,0 +1,23 @@
+version: 2
+
+# These tests PROVE the silver layer's guarantees inside the warehouse.
+models:
+  - name: stg_payments
+    description: Typed staging view over raw.silver_payments.
+    columns:
+      - name: event_id
+        tests: [unique, not_null]
+      - name: merchant_id
+        tests: [not_null]
+      - name: amount
+        tests: [not_null]
+      - name: currency
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["EUR", "GBP", "USD"]
+      - name: status
+        tests:
+          - accepted_values:
+              arguments:
+                values: ["authorised", "settled", "declined", "refunded"]

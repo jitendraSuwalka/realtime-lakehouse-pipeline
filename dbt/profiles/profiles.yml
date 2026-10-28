@@ -1,0 +1,15 @@
+# How dbt connects to the warehouse. Inside the compose network the host is
+# the service name "postgres". In Phase 6 a second output ("prod") points the
+# SAME models at Redshift - that two-line change is the whole migration.
+lakehouse:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DBT_HOST', 'postgres') }}"
+      port: 5432
+      user: lakehouse
+      password: lakehouse
+      dbname: lakehouse
+      schema: analytics
+      threads: 2

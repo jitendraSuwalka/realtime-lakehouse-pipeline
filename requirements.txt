@@ -6,3 +6,6 @@ faker==30.8.2
 pyarrow>=17.0
 boto3>=1.34
 pandas>=2.2
+
+# Phase 3 - warehouse loader (Postgres)
+psycopg[binary]>=3.2

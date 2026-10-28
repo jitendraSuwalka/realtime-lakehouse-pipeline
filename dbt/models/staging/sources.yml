@@ -1,0 +1,11 @@
+version: 2
+
+# Where dbt's world begins: the staging table the loader fills from S3.
+sources:
+  - name: raw
+    schema: raw
+    tables:
+      - name: silver_payments
+        description: >
+          Clean, deduplicated payment events loaded from the silver layer
+          (S3 Parquet) by scripts/load_silver_to_warehouse.py.

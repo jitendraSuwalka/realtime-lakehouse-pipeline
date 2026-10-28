@@ -31,7 +31,7 @@ provisioned with **Terraform**, and tested in CI with **GitHub Actions**.
 - [x] **Phase 0** — project scaffold, Kafka (KRaft) via Docker Compose, payment event generator
 - [x] **Phase 1** — Bronze layer: Kafka consumer landing raw events as date-partitioned Parquet in local S3 (LocalStack)
 - [x] **Phase 2** — Silver layer: Spark (containerised) cleaning, typing, dedupe on event_id, quarantine of bad events
-- [ ] **Phase 3** — Gold layer: dbt star schema (fact_payments + dimensions)
+- [x] **Phase 3** — Gold layer: dbt star schema in Postgres (fact_payments + merchant/customer/date dims) with dbt tests
 - [ ] **Phase 4** — Airflow orchestration of the batch hops
 - [ ] **Phase 5** — Great Expectations validation suites at each layer
 - [ ] **Phase 6** — AWS: Terraform-provisioned S3 + Redshift Serverless, end-to-end cloud run
@@ -65,6 +65,12 @@ python3 scripts/peek_bronze.py
 #    first run downloads the Spark image + S3 connector jars - be patient)
 docker compose run --rm spark-job
 python3 scripts/peek_silver.py
+
+# 8. gold layer: load silver into the warehouse, build + test the star schema
+python3 scripts/load_silver_to_warehouse.py
+docker compose run --rm dbt run
+docker compose run --rm dbt test
+python3 scripts/peek_gold.py
 ```
 
 ## Design decisions
@@ -82,6 +88,8 @@ Recorded as the build progresses — see [docs/architecture.md](docs/architectur
 | **Hive-style partitioning** (`ingest_date=` in bronze, `event_date=` in silver) | Bronze partitions by arrival, silver by business date — analysts think in business dates |
 | **Quarantine, don't delete** | Rejects land in `silver/quarantine/` with a `reject_reason` — countable, inspectable, alertable |
 | **Containerised Spark job** (`docker compose run`) | The container brings its own Python/Java (laptop Python 3.14 is ahead of PySpark); mirrors how production Spark runs |
+| **Postgres as the dev warehouse** | Same dbt models later target Redshift via a profile change — the migration is config, not SQL |
+| **dbt tests on every layer contract** | unique/not_null/accepted_values/relationships prove silver's guarantees and the star schema's referential integrity on every run |
 
 ## Licence
 
