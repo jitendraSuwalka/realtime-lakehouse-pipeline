@@ -73,7 +73,7 @@ MERCHANTS = [
     {
         "merchant_id": f"M{1000 + i}",
         "merchant_name": fake.company(),
-        "merchant_country": pool_rng.choice(["IE", "GB", "FR", "DE", "ES", "NL"]),
+        "merchant_country": random.choice(["IE", "GB", "FR", "DE", "ES", "NL"]),
         "merchant_category": pool_rng.choice(
             ["retail", "food_beverage", "travel", "digital_services", "hospitality"]
         ),
