@@ -2,11 +2,19 @@
 lakehouse_dag.py
 ================
 ONE Airflow DAG that runs the whole medallion pipeline, in order, with
-retries - the five commands you used to type by hand:
+retries - plus (Phase 5) two Great Expectations quality GATES:
 
-  bronze_ingest ──▶ silver_spark ──▶ load_warehouse ──▶ dbt_run ──▶ dbt_test
-  (Kafka→S3)        (Spark clean/    (S3→Postgres       (star      (20 data
-                     quarantine)      COPY)              schema)    tests)
+  bronze_ingest ─▶ quality_bronze ─▶ silver_spark ─▶ quality_silver ─▶
+  (Kafka→S3)       (GATE A:          (Spark clean/    (GATE B: strict
+                    tolerant feed     quarantine)      contract - one bad
+                    monitor, ~1%                       row stops the DAG)
+                    noise allowed)
+                       ─▶ load_warehouse ─▶ dbt_run ─▶ dbt_test
+                          (S3→Postgres)      (star      (20 data
+                                              schema)    tests)
+
+  A failing gate FAILS its task, and everything downstream never runs:
+  bad data is stopped at the door instead of reaching the dashboards.
 
 How each task runs - two patterns, both industry-standard:
 
@@ -47,6 +55,7 @@ NETWORK = "realtime-lakehouse-pipeline_default"
 
 SPARK_IMAGE = "apache/spark:3.5.1"
 DBT_IMAGE = "realtime-lakehouse-pipeline-dbt:latest"
+QUALITY_IMAGE = "realtime-lakehouse-pipeline-quality:latest"
 
 DOCKER_COMMON = dict(
     api_version="auto",
@@ -84,6 +93,31 @@ with DAG(
             "--max-idle-seconds 20"
         ),
     )
+
+    # Great Expectations gates (Phase 5) - same image, different --layer.
+    # Gate A after bronze (tolerant: `mostly` thresholds absorb the known
+    # ~1% bad events; it trips only if the FEED degrades). Gate B after
+    # silver (strict: silver claims to be clean, so one bad row fails it).
+    def quality_gate(layer: str) -> DockerOperator:
+        return DockerOperator(
+            task_id=f"quality_{layer}",
+            image=QUALITY_IMAGE,
+            command=f"--layer {layer}",   # appended to the image ENTRYPOINT
+            mounts=[
+                Mount(source=f"{HOST_REPO}/src/quality", target="/opt/quality",
+                      type="bind", read_only=True),
+            ],
+            environment={
+                "S3_ENDPOINT": "http://localstack:4566",
+                "S3_ACCESS_KEY": "minioadmin",
+                "S3_SECRET_KEY": "minioadmin",
+                "BUCKET": "lakehouse",
+            },
+            **DOCKER_COMMON,
+        )
+
+    quality_bronze = quality_gate("bronze")
+    quality_silver = quality_gate("silver")
 
     # 2. The exact Spark container you run by hand, launched by Airflow.
     silver_spark = DockerOperator(
@@ -146,5 +180,6 @@ with DAG(
         **DOCKER_COMMON,
     )
 
-    # The pipeline, as one readable line:
-    bronze_ingest >> silver_spark >> load_warehouse >> dbt_run >> dbt_test
+    # The pipeline, as one readable line - now with its two quality gates:
+    (bronze_ingest >> quality_bronze >> silver_spark >> quality_silver
+     >> load_warehouse >> dbt_run >> dbt_test)

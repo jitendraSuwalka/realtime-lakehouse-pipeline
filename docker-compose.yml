@@ -19,6 +19,9 @@
 # Phase 4: airflow - the orchestrator (UI on http://localhost:8081). Runs
 #          the whole pipeline as one DAG; launches the Spark and dbt
 #          containers itself through the mounted Docker socket.
+# Phase 5: quality - Great Expectations gates, built from
+#          docker/quality.Dockerfile, run on demand:
+#          `docker compose run --rm quality --layer bronze` / `--layer silver`.
 # ---------------------------------------------------------------------------
 
 # Pinned so the network name (realtime-lakehouse-pipeline_default) is stable -
@@ -142,6 +145,26 @@ services:
     volumes:
       - ./dbt:/usr/app                   # the dbt project
       - ./dbt/profiles:/root/.dbt        # where dbt looks for profiles.yml
+
+  quality:
+    # Great Expectations quality gates (Phase 5), built from our own small
+    # Dockerfile (Python 3.12 inside - same laptop-Python-too-new story as
+    # Spark and dbt). Two gates, run on demand or by Airflow:
+    #   docker compose run --rm quality --layer bronze   (tolerant monitor)
+    #   docker compose run --rm quality --layer silver   (strict contract)
+    build:
+      context: docker
+      dockerfile: quality.Dockerfile
+    profiles: ["jobs"]
+    depends_on:
+      - localstack
+    environment:
+      S3_ENDPOINT: http://localstack:4566
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      BUCKET: lakehouse
+    volumes:
+      - ./src/quality:/opt/quality:ro     # the gate code, read-only
 
   airflow:
     # The orchestrator, built from docker/airflow.Dockerfile (official

@@ -120,3 +120,26 @@ merchants, customers, dates). Analysts and dashboards only ever touch Gold.
   `HOST_REPO`.
 - The DAG is **idempotent end to end** (consumer-group drain, full-refresh
   silver, TRUNCATE+COPY load, dbt rebuild): any run can be repeated safely.
+
+### Phase 5 — data-quality gates (done)
+- **Great Expectations** (1.x, in an image built from
+  `docker/quality.Dockerfile`, Python 3.12 inside) runs two gates inside
+  the DAG: `bronze_ingest → quality_bronze → silver_spark →
+  quality_silver → load_warehouse → ...`.
+- **Gate A (bronze) is a tolerant feed monitor**: schema + identity fields
+  are hard rules, but merchant_id nulls, invalid currencies and
+  non-positive amounts use `mostly=0.95` thresholds — the deliberate ~1%
+  bad events are *known noise*, and the gate trips only when the feed
+  *degrades*. No uniqueness rule on bronze: at-least-once duplicates are
+  allowed there by design.
+- **Gate B (silver) is an absolute contract**: `event_id` unique and
+  never null, every amount positive, every currency valid, `event_date`
+  present — silver claims to be clean, so a single bad row fails the
+  task, and Airflow stops everything downstream. Bad data never reaches
+  the warehouse.
+- Suites are **defined in code** (`src/quality/run_quality_checks.py`),
+  version-controlled next to the pipeline they guard — the same
+  philosophy as dbt's `schema.yml` tests, one layer earlier.
+- Division of labour: **GX guards the lake, dbt tests guard the
+  warehouse.** Gate B proves silver's cleaning worked; dbt's 20 tests
+  prove the star schema built from it is internally consistent.
