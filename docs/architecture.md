@@ -143,3 +143,23 @@ merchants, customers, dates). Analysts and dashboards only ever touch Gold.
 - Division of labour: **GX guards the lake, dbt tests guard the
   warehouse.** Gate B proves silver's cleaning worked; dbt's 20 tests
   prove the star schema built from it is internally consistent.
+
+### Phase 7a — continuous integration (done)
+- **GitHub Actions** (`.github/workflows/ci.yml`): three parallel jobs on
+  every push/PR to main. No AWS credentials in CI — it validates, it does
+  not deploy.
+- **Job 1 — lint + unit tests**: ruff (rule set pinned explicitly, the
+  image-pinning lesson applied to lint rules) and pytest. The tests
+  encode the project's own history: a **regression test for the
+  merchant-drift bug** (two fresh interpreters must build identical
+  merchant pools), a bronze Parquet **round-trip** test ("stored exactly
+  as received", proven), and behavioural tests that both GX gates pass
+  what they should **and fail what they should** — a gate that cannot
+  fail is decoration.
+- **Job 2 — dbt build + test**: a Postgres 16 **service container** is
+  born for the job, seeded with a deterministic batch
+  (`scripts/ci_seed_warehouse.py` — same commit, same data, so red means
+  the code changed, never the dice), then `dbt run` + `dbt test` prove
+  the star schema and all 20 contracts on every push.
+- **Job 3 — terraform fmt + validate**: the cloud footprint is checked
+  for style and internal validity before any human reviews the diff.

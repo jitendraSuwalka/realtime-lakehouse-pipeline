@@ -1,0 +1,9 @@
+# Copy this file to terraform.tfvars (which is GITIGNORED - it stays on
+# your machine) and fill in your real values.
+
+# Your laptop's public IP, /32 = exactly this one address.
+# Find it:  curl -s ifconfig.me
+my_ip = "203.0.113.7/32"
+
+# region  = "eu-west-1"            # uncomment to override the default
+# project = "realtime-lakehouse"   # uncomment to override the default

@@ -1,5 +1,7 @@
 # Real-Time Lakehouse Pipeline — Medallion Architecture on AWS
 
+![CI](https://github.com/jitendraSuwalka/realtime-lakehouse-pipeline/actions/workflows/ci.yml/badge.svg)
+
 An end-to-end streaming data platform for simulated payment events:
 **Kafka → Bronze (raw) → Silver (Spark-cleaned) → Gold (dbt star schema in Redshift)**,
 orchestrated with **Airflow**, quality-guarded with **Great Expectations**,
@@ -34,8 +36,9 @@ provisioned with **Terraform**, and tested in CI with **GitHub Actions**.
 - [x] **Phase 3** — Gold layer: dbt star schema in Postgres (fact_payments + merchant/customer/date dims) with dbt tests
 - [x] **Phase 4** — Airflow DAG orchestrating bronze → silver → warehouse → dbt build + test (BashOperator + DockerOperator, retries, daily schedule)
 - [x] **Phase 5** — Great Expectations quality gates: tolerant bronze feed monitor + strict silver contract, enforced in the DAG
-- [ ] **Phase 6** — AWS: Terraform-provisioned S3 + Redshift Serverless, end-to-end cloud run
-- [ ] **Phase 7** — CI/CD with GitHub Actions; final docs and demo
+- [ ] **Phase 6** — AWS for real: Terraform-provisioned S3 + Redshift Serverless, end-to-end cloud run (Terraform config already in `terraform/`, CI-validated; cloud run pending AWS account activation)
+- [x] **Phase 7a** — CI with GitHub Actions: ruff + pytest (incl. a regression test for the merchant-drift bug and pass/FAIL tests for both quality gates), dbt build + all 20 tests against an ephemeral Postgres, and `terraform validate` — on every push
+- [ ] **Phase 7b** — final docs, architecture diagram, demo
 
 ## Quickstart (what works so far)
 
@@ -103,6 +106,8 @@ Recorded as the build progresses — see [docs/architecture.md](docs/architectur
 | **dbt tests on every layer contract** | unique/not_null/accepted_values/relationships prove silver's guarantees and the star schema's referential integrity on every run |
 | **Two-speed quality gates** | Bronze gate uses GX `mostly` thresholds (the known ~1% bad events are noise, not news); silver gate is absolute — silver claims to be clean, so one bad row stops the DAG before the warehouse |
 | **Airflow as conductor, not compute** | Tasks launch the same Spark/dbt containers used manually (DockerOperator over the socket); heavy work stays out of the scheduler |
+| **Terraform for all cloud resources** | The whole AWS footprint is code in `terraform/` — CI-validated on every push, applied (and destroyed) in Phase 6 |
+| **CI proves behaviour, not vibes** | Unit tests encode past incidents (merchant drift) and gate semantics; dbt's 20 tests run on a fresh warehouse per push; Terraform is validated with no credentials — green means the contracts hold |
 | **Idempotent DAG** | Consumer-group drain + full-refresh layers + TRUNCATE/COPY mean any run can be safely repeated — the property that makes schedules operable |
 
 ## Licence

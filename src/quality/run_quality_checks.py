@@ -158,7 +158,10 @@ def build_suite(layer: str):
 def validate(df: pd.DataFrame, layer: str) -> bool:
     import great_expectations as gx
     from great_expectations.data_context.types.base import (
-        DataContextConfig, InMemoryStoreBackendDefaults, ProgressBarsConfig)
+        DataContextConfig,
+        InMemoryStoreBackendDefaults,
+        ProgressBarsConfig,
+    )
 
     # Ephemeral context = in-memory, no project folder to maintain. The
     # suites live in this file, in version control, next to the code they

@@ -41,10 +41,11 @@ that makes scheduled pipelines operable.
 import os
 from datetime import datetime, timedelta
 
-from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.providers.docker.operators.docker import DockerOperator
 from docker.types import Mount
+
+from airflow import DAG
 
 # The repo's path ON THE HOST (see gotcha above) - injected by compose.
 HOST_REPO = os.environ.get("HOST_REPO", "")

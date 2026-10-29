@@ -1,0 +1,93 @@
+# ---------------------------------------------------------------------------
+# CI: every push and pull request proves, on a fresh machine, that
+#   1. the Python code is clean (ruff) and its unit tests pass - including
+#      the regression test for the merchant-drift bug dbt once caught,
+#      and the quality gates' pass/FAIL behaviour;
+#   2. the dbt star schema still builds and all 20 data tests pass,
+#      against a real Postgres spun up just for the job;
+#   3. the Terraform is well-formatted and valid - the cloud footprint
+#      is reviewed by a machine before any human merges it.
+# No AWS credentials anywhere: CI validates; it does not deploy.
+# ---------------------------------------------------------------------------
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install "great_expectations>=1.2,<2" pandas ruff pytest
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Unit tests (pytest)
+        run: pytest -q
+
+  dbt-build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lakehouse
+          POSTGRES_PASSWORD: lakehouse
+          POSTGRES_DB: lakehouse
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lakehouse"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dbt + seed dependencies
+        run: pip install dbt-postgres==1.9.0 "psycopg[binary]" faker
+
+      - name: Seed the warehouse (deterministic)
+        run: python scripts/ci_seed_warehouse.py
+
+      - name: dbt run
+        env:
+          DBT_HOST: localhost
+        run: dbt run --project-dir dbt --profiles-dir dbt/profiles
+
+      - name: dbt test (the 20 contracts)
+        env:
+          DBT_HOST: localhost
+        run: dbt test --project-dir dbt --profiles-dir dbt/profiles
+
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: terraform validate (no cloud, no credentials)
+        working-directory: terraform
+        run: |
+          terraform init -backend=false
+          terraform validate

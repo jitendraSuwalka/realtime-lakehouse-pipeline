@@ -1,0 +1,12 @@
+# Ruff: the Python linter CI runs on every push (fast, standard).
+# The rule set is pinned EXPLICITLY so a new ruff release can never
+# change what passes - the same image-pinning lesson, applied to rules:
+#   E4/E7/E9 = real syntax/indentation errors
+#   F        = genuine bugs (unused imports/variables, undefined names)
+#   I        = import ordering (one honest house style)
+line-length = 100
+target-version = "py312"
+exclude = ["data", ".venv", "terraform"]
+
+[lint]
+select = ["E4", "E7", "E9", "F", "I"]

@@ -29,8 +29,8 @@ import os
 import re
 
 import boto3
-import pyarrow.parquet as pq
 import psycopg
+import pyarrow.parquet as pq
 
 S3_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://localhost:4566")
 BUCKET = os.getenv("BUCKET", "lakehouse")
